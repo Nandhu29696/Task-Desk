@@ -1,0 +1,520 @@
+// TaskDesk data model.
+// Enum like values are stored as strings so the schema works on SQLite and PostgreSQL.
+// Allowed values live in src/lib/constants.ts.
+// Calendar dates without a time (due dates, leave dates, holidays) are stored as day keys:
+// text in the form year month day, for example 2026 10 11 written as an ISO date, in the team time zone (APP_TIMEZONE).
+// Moments in time (createdAt, completedAt, signedInAt) are DateTime values stored in UTC.
+
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client" // runs through the driver adapters in src/lib/db.ts
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ people ============
+
+model User {
+  id                 String   @id @default(cuid())
+  name               String
+  email              String   @unique
+  passwordHash       String
+  role               String   @default("MEMBER") // ADMIN | LEAD | MEMBER
+  title              String?
+  phone              String?
+  location           String?
+  empType            String   @default("ON_ROLE") // ON_ROLE | ASSOCIATE
+  active             Boolean  @default(true)
+  reportsToId        String?
+  addedById          String?
+  mustChangePassword Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  reportsTo User?  @relation("ReportsTo", fields: [reportsToId], references: [id], onDelete: SetNull)
+  reports   User[] @relation("ReportsTo")
+  addedBy   User?  @relation("AddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  added     User[] @relation("AddedBy")
+
+  ledProjects       Project[]          @relation("ProjectLead")
+  memberships       ProjectMember[]
+  assignedTasks     Task[]             @relation("TaskAssignee")
+  createdTasks      Task[]             @relation("TaskCreator")
+  collaborations    TaskCollaborator[]
+  subtasks          Subtask[]
+  approvalsToGive   TaskApproval[]     @relation("Approver")
+  approvalsAsked    TaskApproval[]     @relation("ApprovalRequester")
+  comments          Comment[]
+  activities        Activity[]
+  rules             RecurringRule[]    @relation("RuleAssignee")
+  timeLogs          TimeLog[]
+  sessions          Session[]
+  leaves            Leave[]            @relation("LeaveOwner")
+  leavesDecided     Leave[]            @relation("LeaveDecider")
+  notifications     Notification[]     @relation("NotifyTo")
+  notificationsSent Notification[]     @relation("NotifyFrom")
+  announcements     Announcement[]
+  announcementReads AnnouncementRead[]
+  policyAcks        PolicyAck[]
+  policiesUpdated   Policy[]
+  credentialViews   CredentialView[]
+  dayPlans          DayPlan[]
+  clientsOwned      Client[]
+  clientNotes       ClientNote[]
+
+  @@index([role, active])
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day         String // day key of signedInAt in the team time zone
+  signedInAt  DateTime  @default(now())
+  signedOutAt DateTime?
+
+  @@index([userId, day])
+  @@index([day])
+}
+
+// ============ projects and rules ============
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  clientId    String?
+  client      Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientLabel String? // free text client name for projects without a client record
+  industry    String?
+  line        String   @default("SEO") // SEO | PPC | CONTENT | WEBDEV | REPORTING | GENERAL
+  website     String?
+  description String?
+  status      String   @default("ACTIVE") // ACTIVE | PAUSED | ARCHIVED
+  leadId      String?
+  lead        User?    @relation("ProjectLead", fields: [leadId], references: [id], onDelete: SetNull)
+  startDate   String?
+  pocName     String?
+  pocRole     String?
+  pocPhone    String?
+  pocEmail    String?
+  comms       String   @default("") // comma separated: CALL,WHATSAPP,EMAIL,VISIT
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members    ProjectMember[]
+  rules      RecurringRule[]
+  tasks      Task[]
+  activities Activity[]
+}
+
+model ProjectMember {
+  projectId String
+  userId    String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+}
+
+model RecurringRule {
+  id               String   @id @default(cuid())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  description      String?
+  category         String   @default("GENERAL")
+  frequency        String // DAILY | WEEKLY | MONTHLY | QUARTERLY | ONCE
+  weekday          Int? // 0 Sunday to 6 Saturday, for WEEKLY
+  monthDay         Int? // 1 to 31 for MONTHLY and QUARTERLY, clamped to the month end
+  skipWeekends     Boolean  @default(true) // for DAILY
+  dueOffsetDays    Int      @default(0) // for ONCE: days after startDate
+  startDate        String
+  endDate          String?
+  assigneeId       String? // empty means the project lead
+  assignee         User?    @relation("RuleAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  priority         String   @default("MEDIUM")
+  estimate         Int? // minutes
+  checklist        String   @default("[]") // JSON array of subtask titles
+  active           Boolean  @default(true)
+  generatedThrough String? // day key up to which tasks exist
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tasks Task[]
+}
+
+// ============ tasks ============
+
+model Task {
+  id             String    @id @default(cuid())
+  title          String
+  description    String    @default("")
+  projectId      String?
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assigneeId     String?
+  assignee       User?     @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdById    String?
+  createdBy      User?     @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  ruleId         String?
+  rule           RecurringRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  occurrenceDate String? // the date the rule fired on, before holiday shifting
+  renewKey       String?   @unique // service id and renewal date, for renewal reminders
+  frequency      String    @default("ONCE")
+  category       String    @default("GENERAL")
+  status         String    @default("TODO") // TODO | IN_PROGRESS | WAITING | BLOCKED | IN_REVIEW | DONE | CANCELLED
+  priority       String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  dueDate        String?
+  estimate       Int? // minutes
+  spentMinutes   Int       @default(0)
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  collaborators TaskCollaborator[]
+  subtasks      Subtask[]
+  dependsOn     TaskDependency[] @relation("DependentTask")
+  blocks        TaskDependency[] @relation("BlockingTask")
+  approvals     TaskApproval[]
+  comments      Comment[]
+  activities    Activity[]
+  timeLogs      TimeLog[]
+
+  @@unique([ruleId, occurrenceDate])
+  @@index([assigneeId, status])
+  @@index([dueDate])
+  @@index([projectId, status])
+}
+
+model Subtask {
+  id         String  @id @default(cuid())
+  taskId     String
+  task       Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title      String
+  assigneeId String?
+  assignee   User?   @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  done       Boolean @default(false)
+  sortOrder  Int     @default(0)
+
+  @@index([taskId])
+}
+
+model TaskDependency {
+  taskId      String // the task that waits
+  dependsOnId String // the task it waits on
+  task        Task   @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn   Task   @relation("BlockingTask", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, dependsOnId])
+}
+
+model TaskApproval {
+  id            String    @id @default(cuid())
+  taskId        String
+  task          Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  approverId    String
+  approver      User      @relation("Approver", fields: [approverId], references: [id], onDelete: Cascade)
+  requestedById String?
+  requestedBy   User?     @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  note          String    @default("")
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([approverId, status])
+}
+
+model TaskCollaborator {
+  taskId String
+  userId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([userId, createdAt])
+}
+
+model TimeLog {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  minutes   Int
+  workDate  String
+  note      String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([workDate])
+  @@index([userId, workDate])
+}
+
+model DayPlan {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date   String
+  items  String @default("[]") // JSON array of { taskId, slot } where slot is MORNING | AFTERNOON | EVENING
+
+  @@unique([userId, date])
+}
+
+// ============ log and notifications ============
+
+model Activity {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  action    String
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([taskId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation("NotifyTo", fields: [userId], references: [id], onDelete: Cascade)
+  kind      String // ASSIGNED | MENTION | APPROVAL | LEAVE | RENEWAL | POLICY | ANNOUNCE | UPDATE
+  title     String
+  body      String    @default("")
+  link      String    @default("")
+  fromId    String?
+  from      User?     @relation("NotifyFrom", fields: [fromId], references: [id], onDelete: SetNull)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  byId      String?
+  by        User?    @relation(fields: [byId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  reads AnnouncementRead[]
+}
+
+model AnnouncementRead {
+  announcementId String
+  userId         String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+
+  @@id([announcementId, userId])
+}
+
+// ============ calendar and leave ============
+
+model Holiday {
+  id   String @id @default(cuid())
+  date String
+  name String
+  type String @default("PUBLIC") // PUBLIC | RESTRICTED | COMPANY
+
+  @@index([date])
+}
+
+model Leave {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("LeaveOwner", fields: [userId], references: [id], onDelete: Cascade)
+  type         String // CASUAL | SICK | EARNED | COMPOFF | UNPAID | RH
+  fromDate     String
+  toDate       String
+  half         Boolean   @default(false)
+  reason       String    @default("")
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED | CANCELLED
+  decidedById  String?
+  decidedBy    User?     @relation("LeaveDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, status])
+  @@index([fromDate, toDate])
+}
+
+model Setting {
+  key   String @id
+  value String // JSON
+}
+
+// ============ office ============
+
+model Policy {
+  id          String      @id @default(cuid())
+  title       String
+  body        String
+  sortOrder   Int         @default(0)
+  updatedById String?
+  updatedBy   User?       @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedOn   String
+  acks        PolicyAck[]
+}
+
+model PolicyAck {
+  policyId String
+  userId   String
+  policy   Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ackedOn  String
+
+  @@id([policyId, userId])
+}
+
+model Tool {
+  id          String   @id @default(cuid())
+  name        String
+  category    String   @default("Others")
+  url         String   @default("")
+  username    String   @default("")
+  passwordEnc String   @default("") // encrypted, see src/lib/crypto.ts
+  twofa       String   @default("")
+  plan        String   @default("FREE") // FREE | PAID
+  access      String   @default("SHARED") // OWN | SHARED | FREE
+  visibility  String   @default("ADMIN") // ADMIN | LEAD | ALL: who may reveal the password
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Credential {
+  id           String           @id @default(cuid())
+  scope        String           @default("CLIENT") // CLIENT | INTERNAL
+  clientId     String?
+  client       Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  name         String
+  url          String           @default("")
+  username     String           @default("")
+  passwordEnc  String           @default("")
+  notes        String           @default("")
+  leadAccess   String           @default("NONE") // NONE | LOGIN | FULL
+  memberAccess String           @default("NONE")
+  changedOn    String
+  createdAt    DateTime         @default(now())
+  views        CredentialView[]
+}
+
+model CredentialView {
+  id           String     @id @default(cuid())
+  credentialId String?
+  credential   Credential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  toolId       String?
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String // credential or tool name at the time
+  action       String // viewed | copied
+  createdAt    DateTime   @default(now())
+
+  @@index([createdAt])
+}
+
+// ============ clients (admin only) ============
+
+model Client {
+  id              String          @id @default(cuid())
+  name            String
+  industry        String?
+  stage           String          @default("LEAD") // LEAD | PROPOSAL | NEGOTIATION | ONBOARDING | ACTIVE | ON_HOLD | COMPLETED | CHURNED
+  ownerId         String?
+  owner           User?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  website         String          @default("")
+  city            String          @default("")
+  address         String          @default("")
+  gst             String          @default("")
+  pocName         String          @default("")
+  pocRole         String          @default("")
+  pocPhone        String          @default("")
+  pocEmail        String          @default("")
+  comms           String          @default("")
+  onboardedOn     String?
+  contractRenewal String?
+  notes           String          @default("")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  projects    Project[]
+  contacts    ClientContact[]
+  services    ClientService[]
+  payments    Payment[]
+  notesLog    ClientNote[]
+  credentials Credential[]
+}
+
+model ClientContact {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name     String
+  role     String @default("")
+  phone    String @default("")
+  email    String @default("")
+}
+
+model ClientService {
+  id            String @id @default(cuid())
+  clientId      String
+  client        Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  line          String // SEO | PPC | CONTENT | WEBDEV | AMC | REPORTING | OTHER | DOMAIN | HOSTING
+  type          String @default("RECURRING") // RECURRING | ONE_TIME
+  price         Int    @default(0) // whole rupees
+  cycle         String? // MONTHLY | QUARTERLY | YEARLY for RECURRING
+  startDate     String @default("")
+  completedDate String @default("")
+  item          String @default("") // domain name, hosting plan, AMC scope
+  provider      String @default("")
+  renewDate     String @default("")
+
+  @@index([clientId])
+}
+
+model Payment {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  amount     Int
+  receivedOn String
+  note       String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([receivedOn])
+}
+
+model ClientNote {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  byId      String?
+  by        User?    @relation(fields: [byId], references: [id], onDelete: SetNull)
+  on        String
+  text      String
+  createdAt DateTime @default(now())
+}
