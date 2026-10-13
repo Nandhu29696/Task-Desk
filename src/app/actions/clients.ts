@@ -6,7 +6,7 @@ import { COMMS, INDUSTRIES, LINES, LIVE_STAGES, PRODUCT_LINES, RENEW_LINES, STAG
 import { dk, fmtDate, inr, isDayKey, kd, todayKey } from "@/lib/dates";
 import { act } from "@/lib/log";
 import { isAdmin } from "@/lib/permissions";
-import { generate, renewalReminders } from "@/lib/generator";
+import { cancelStaleRenewals, generate, renewalReminders } from "@/lib/generator";
 import { bool, int, list, ok, refuse, run, str, type Result } from "@/lib/action";
 import type { Me } from "@/lib/auth";
 
@@ -104,6 +104,7 @@ async function removeClient(me: Me, id: string): Promise<Result> {
     await tx.client.delete({ where: { id } });
     await act(tx, me.id, "deleted client", c!.name);
   });
+  await cancelStaleRenewals(me.id);
   return ok("Client deleted", { href: "/clients" });
 }
 
@@ -168,6 +169,7 @@ export async function removeService(_p: Result, fd: FormData): Promise<Result> {
     adminOnly(me);
     const s = await serviceOf(fd);
     await prisma.clientService.delete({ where: { id: s.id } });
+    await cancelStaleRenewals(me.id);
     return ok("Service removed");
   });
 }

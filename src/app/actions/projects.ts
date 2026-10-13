@@ -232,13 +232,16 @@ export async function toggleRule(_p: Result, fd: FormData): Promise<Result> {
       const today = todayKey();
       await prisma.$transaction(async (tx) => {
         await tx.task.deleteMany({ where: { ruleId: r.id, dueDate: { gt: today }, ...untouchedWhere } });
-        await tx.recurringRule.update({ where: { id: r.id }, data: { active: false, ...(r.frequency !== "ONCE" ? { generatedThrough: today } : {}) } });
+        const lost = r.frequency === "ONCE" && !(await tx.task.count({ where: { ruleId: r.id } }));
+        await tx.recurringRule.update({ where: { id: r.id }, data: { active: false, generatedThrough: r.frequency !== "ONCE" ? today : lost ? null : r.generatedThrough } });
         await act(tx, me.id, "paused recurring task", r.title, null, r.projectId);
       });
       return ok("Paused. Future untouched occurrences removed");
     }
     await prisma.$transaction(async (tx) => {
-      await tx.recurringRule.update({ where: { id: r.id }, data: { active: true } });
+      // A one time rule whose task was removed while paused must be generated again on resume.
+      const lost = r.frequency === "ONCE" && !(await tx.task.count({ where: { ruleId: r.id } }));
+      await tx.recurringRule.update({ where: { id: r.id }, data: { active: true, ...(lost ? { generatedThrough: null } : {}) } });
       await act(tx, me.id, "resumed recurring task", r.title, null, r.projectId);
     });
     const n = await generate({ ruleId: r.id, byId: me.id });
