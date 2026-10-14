@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { act, notify, notifyAdmins } from "@/lib/log";
 import { addableRoles, canEditPerson, isAdmin } from "@/lib/permissions";
 import { EMPTYPE, ROLE } from "@/lib/constants";
+import { handOver } from "@/lib/people";
 import { bool, list, ok, opt, refuse, run, str, type Result } from "@/lib/action";
 
 const asPerson = (x: { id: string; role: string; reportsToId: string | null; addedById: string | null }) => ({ id: x.id, role: x.role, reportsTo: x.reportsToId, addedBy: x.addedById });
@@ -70,7 +71,23 @@ export async function editPerson(_p: Result, fd: FormData): Promise<Result> {
         const boss = await prisma.user.findUnique({ where: { id: reportsTo }, select: { role: true } });
         if (!boss || boss.role === "MEMBER") reportsTo = null;
       }
-      await prisma.user.update({ where: { id: x!.id }, data: { ...base, role, active, reportsToId: reportsTo } });
+      const leaving = x!.active && !active;
+      const demoted = x!.role !== "MEMBER" && role === "MEMBER";
+      let to: { id: string; name: string } | null = null;
+      if (leaving || demoted) {
+        const want = opt(fd, "handover");
+        to = want && want !== x!.id ? await prisma.user.findFirst({ where: { id: want, active: true, role: { in: ["ADMIN", "LEAD"] } }, select: { id: true, name: true } }) : null;
+        if (!to) refuse(`Pick an active lead or admin to take over ${x!.name}'s work`);
+      }
+      const moved = await prisma.$transaction(async (tx) => {
+        await tx.user.update({ where: { id: x!.id }, data: { ...base, role, active, reportsToId: reportsTo } });
+        return to ? handOver(tx, x!.id, to.id, { leaving, actorId: me.id }) : [];
+      });
+      if (to && moved.length) {
+        await notify(prisma, to.id, "UPDATE", `${x!.name}'s work was handed to you`, moved.join(", ") + ".", "/tasks", me.id);
+        await act(prisma, me.id, leaving ? "deactivated team member" : "changed access", `${x!.name}, handed to ${to.name}: ${moved.join(", ")}`);
+      }
+      return ok(`Saved ${name}${to && moved.length ? `. ${moved.join(", ")} handed to ${to.name}` : ""}`);
     } else {
       await prisma.user.update({ where: { id: x!.id }, data: base });
     }

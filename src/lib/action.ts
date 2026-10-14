@@ -16,9 +16,10 @@ export const refuse = (msg: string): never => { throw new ActionError(msg); };
  * Wraps a server action body: loads the signed in user, runs the body,
  * refreshes every page, and turns refusals and errors into a toast message.
  */
-export async function run(body: (me: Me) => Promise<Result | void>): Promise<Result> {
+export async function run(body: (me: Me) => Promise<Result | void>, opts: { allowTempPassword?: boolean } = {}): Promise<Result> {
   const me = await getCurrentUser();
   if (!me) return fail("Please sign in again.");
+  if (me.mustChangePassword && !opts.allowTempPassword) return fail("Set your own password on My account first.");
   try {
     const r = await body(me);
     revalidatePath("/", "layout");

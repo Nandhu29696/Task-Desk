@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { COMMS, INDUSTRIES, LINES, LIVE_STAGES, PRODUCT_LINES, RENEW_LINES, STAGE, STAGES, SVC, SVC_LINES, TEMPLATES, toProjLine } from "@/lib/constants";
 import { dk, fmtDate, inr, isDayKey, kd, todayKey } from "@/lib/dates";
-import { act } from "@/lib/log";
+import { act, notifyMany } from "@/lib/log";
 import { isAdmin } from "@/lib/permissions";
 import { cancelStaleRenewals, generate, renewalReminders } from "@/lib/generator";
 import { bool, int, list, ok, refuse, run, str, type Result } from "@/lib/action";
@@ -267,8 +267,8 @@ export async function goLive(_p: Result, fd: FormData): Promise<Result> {
     const name = str(fd, "name");
     if (!name) refuse("Add a project name.");
     const leadId = str(fd, "leadId");
-    const lead = leadId ? await prisma.user.findUnique({ where: { id: leadId }, select: { id: true, active: true } }) : null;
-    if (!lead || !lead.active) refuse("Pick a project lead.");
+    const lead = leadId ? await prisma.user.findFirst({ where: { id: leadId, active: true, role: { in: ["ADMIN", "LEAD"] } }, select: { id: true } }) : null;
+    if (!lead) refuse("Pick an active lead or admin as the project lead.");
     const line = LINES.includes(str(fd, "line")) ? str(fd, "line") : "SEO";
     const start = day(str(fd, "start")) || todayKey();
     const memberIds = [...new Set([...list(fd, "m"), leadId])];
@@ -299,6 +299,7 @@ export async function goLive(_p: Result, fd: FormData): Promise<Result> {
       await tx.clientService.updateMany({ where: { clientId: c!.id, startDate: "" }, data: { startDate: start } });
       await note(tx, c!.id, me.id, `Moved to live from ${STAGE[prev]}. Project ${p.name} created.`);
       await act(tx, me.id, "moved client to live", `${c!.name}, ${tpls.length} recurring tasks`, null, p.id);
+      await notifyMany(tx, memberIds.filter((id) => valid.has(id)), "ASSIGNED", `${me.name} added you to a project`, p.name, `/projects/${p.id}`, me.id);
       return p;
     });
     const n = await generate({ projectId: p.id, byId: me.id });

@@ -19,6 +19,9 @@ import { Board } from "@/components/tasks/Board";
 
 type SP = Record<string, string | undefined>;
 
+const PAGE = 100; // list view rows per page
+const BOARD_LIMIT = 200; // cards per board column
+
 function BoardCard({ t, lc, edit, comments }: { t: T; lc: LineCtx; edit: boolean; comments: number }) {
   const shut = closed(t.status), sd = t.subtasks.filter((x) => x.done).length, bl = !shut && blockerCount(t, lc.statusOf);
   const p = lc.project(t.projectId), a = lc.user(t.assigneeId);
@@ -71,22 +74,46 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
   if (f.cadence) and.push({ frequency: f.cadence });
   if (f.project) and.push({ projectId: f.project });
   if (f.overdue) and.push({ status: { notIn: ["DONE", "CANCELLED"] }, dueDate: { lt: today, not: null } });
+  if (f.q) {
+    const has = { contains: f.q, mode: "insensitive" } as const;
+    and.push({ OR: [{ title: has }, { description: has }, { subtasks: { some: { title: has } } }] });
+  }
 
-  const [all, projects, statusRows] = await Promise.all([
-    loadTasks({ AND: and }),
-    loadProjects(),
-    prisma.task.findMany({ select: { id: true, status: true } }),
-  ]);
-  const q = f.q.toLowerCase();
-  let arr = q ? all.filter((t) => (t.title + " " + t.description + " " + t.subtasks.map((s) => s.title).join(" ")).toLowerCase().includes(q)) : all;
-  arr = sortTasks(arr);
-
+  // Light rows first (sorting and counts), then full rows only for what is on screen.
   const cols = ["open", "all"].includes(f.status) ? BOARD_COLS.concat(f.status === "all" ? ["CANCELLED"] : []) : [f.status];
-  const total = arr.length;
-  const shown = view === "BOARD" ? arr.filter((t) => cols.includes(t.status)) : arr.slice(0, 300);
-  const cRows = shown.length ? await prisma.comment.groupBy({ by: ["taskId"], where: { taskId: { in: shown.map((t) => t.id) } }, _count: { _all: true } }) : [];
+  const [light, projects] = await Promise.all([
+    prisma.task.findMany({ where: { AND: and }, select: { id: true, status: true, dueDate: true, priority: true, completedAt: true, cancelledAt: true } }),
+    loadProjects(),
+  ]);
+  const total = light.length;
+  const closedAt = (t: (typeof light)[number]) => (t.completedAt || t.cancelledAt)?.getTime() || 0;
+  const colIds = new Map<string, string[]>();
+  const colCount = new Map<string, number>();
+  for (const st of cols) {
+    const inCol = light.filter((t) => t.status === st);
+    colCount.set(st, inCol.length);
+    colIds.set(st, (closed(st) ? [...inCol].sort((x, y) => closedAt(y) - closedAt(x)) : sortTasks(inCol)).slice(0, BOARD_LIMIT).map((t) => t.id));
+  }
+  const pages = Math.max(1, Math.ceil(total / PAGE));
+  const page = Math.min(pages, Math.max(1, Number(sp.page) || 1));
+  const pageIds = view === "BOARD" ? [...colIds.values()].flat() : sortTasks(light).slice((page - 1) * PAGE, page * PAGE).map((t) => t.id);
+  const loaded = pageIds.length ? await loadTasks({ id: { in: pageIds } }) : [];
+  const byId = new Map(loaded.map((t) => [t.id, t]));
+  const shown = pageIds.map((id) => byId.get(id)).filter((t): t is T => !!t);
+  const depIds = [...new Set(shown.flatMap((t) => t.deps))].filter((id) => !byId.has(id));
+  const [cRows, depRows] = await Promise.all([
+    shown.length ? prisma.comment.groupBy({ by: ["taskId"], where: { taskId: { in: shown.map((t) => t.id) } }, _count: { _all: true } }) : Promise.resolve([]),
+    depIds.length ? prisma.task.findMany({ where: { id: { in: depIds } }, select: { id: true, status: true } }) : Promise.resolve([]),
+  ]);
   const comments = new Map(cRows.map((c) => [c.taskId, c._count._all]));
-  const lc = lineCtx(ctx, projects, statusRows, comments);
+  const lc = lineCtx(ctx, projects, [...shown, ...depRows], comments);
+  const pageHref = (n: number) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) if (v && k !== "page") p.set(k, v);
+    if (n > 1) p.set("page", String(n));
+    const q = p.toString();
+    return "/tasks" + (q ? "?" + q : "");
+  };
 
   const toggle = (
     <ActionForm action={setTaskView} quiet className="seg seg-sm" role="tablist" aria-label="View">
@@ -96,22 +123,23 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
 
   let body: React.ReactNode;
   if (view === "BOARD") {
-    const inCol = (st: string) => shown.filter((t) => t.status === st && ((st !== "DONE" && st !== "CANCELLED") || f.status !== "open" || ((t.completedAt || t.cancelledAt || "").slice(0, 10) >= recentFrom)));
-    const doneSort = (a: T[]) => [...a].sort((x, y) => ((x.completedAt || x.cancelledAt || "") < (y.completedAt || y.cancelledAt || "") ? 1 : -1));
+    const onBoard = cols.reduce((a, st) => a + (colCount.get(st) || 0), 0);
     body = (
       <>
-        <p className="small muted">{shown.length} tasks on the board</p>
+        <p className="small muted">{onBoard} tasks on the board</p>
         <Board cols={cols.length}>
           {cols.map((st) => {
-            const items = closed(st) ? doneSort(inCol(st)) : inCol(st);
+            const items = (colIds.get(st) || []).map((id) => byId.get(id)).filter((t): t is T => !!t);
+            const count = colCount.get(st) || 0;
             return (
               <section key={st} className={`kcol kc-${st}`} data-drop={st}>
-                <header className="khead"><span className="kdot" /><b>{STATUS[st]}</b><span className="kcount num">{items.length}</span></header>
+                <header className="khead"><span className="kdot" /><b>{STATUS[st]}</b><span className="kcount num">{count}</span></header>
                 {st === "DONE" && f.status === "open" ? <p className="xs muted khint">Done in the last 14 days</p> : null}
                 <div className="kbody" data-clamp="list">
-                  {items.slice(0, 200).map((t) => <BoardCard key={t.id} t={t} lc={lc} edit={canEdit(me, t, lc.project(t.projectId))} comments={comments.get(t.id) || 0} />)}
+                  {items.map((t) => <BoardCard key={t.id} t={t} lc={lc} edit={canEdit(me, t, lc.project(t.projectId))} comments={comments.get(t.id) || 0} />)}
                 </div>
-                {items.length ? null : <p className="kempty xs muted">Nothing here</p>}
+                {count > items.length ? <p className="xs muted khint">Showing {items.length} of {count}. Use the filters or the list view to see the rest.</p> : null}
+                {count ? null : <p className="kempty xs muted">Nothing here</p>}
               </section>
             );
           })}
@@ -121,7 +149,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
   } else {
     body = (
       <>
-        <p className="small muted">{total} {total === 1 ? "task" : "tasks"}{total > 300 ? ", showing the first 300" : ""}</p>
+        <p className="small muted">{total} {total === 1 ? "task" : "tasks"}{pages > 1 ? `, page ${page} of ${pages}` : ""}</p>
         {shown.length ? (
           <div className="panel tablebox">
             <table className="t" style={{ minWidth: 880 }}>
@@ -148,6 +176,13 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
             </table>
           </div>
         ) : <Empty>No tasks match these filters. Try another person or status, or reset the filters.</Empty>}
+        {pages > 1 ? (
+          <nav className="row" aria-label="Pages" style={{ gap: 8, justifyContent: "center" }}>
+            {page > 1 ? <Link className="btn btn-q btn-sm" href={pageHref(page - 1)}>Previous</Link> : null}
+            <span className="small muted num">Page {page} of {pages}</span>
+            {page < pages ? <Link className="btn btn-q btn-sm" href={pageHref(page + 1)}>Next</Link> : null}
+          </nav>
+        ) : null}
       </>
     );
   }

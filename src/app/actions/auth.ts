@@ -41,12 +41,14 @@ export async function logout() {
 
 export async function changePassword(_prev: Result, fd: FormData): Promise<Result> {
   return run(async (me) => {
-    const current = str(fd, "current"), next = str(fd, "next"), again = str(fd, "again");
+    // Passwords are taken exactly as typed (no trimming), the same way sign in reads them.
+    const raw = (k: string) => String(fd.get(k) ?? "");
+    const current = raw("current"), next = raw("next"), again = raw("again");
     if (next.length < 8) refuse("Use at least 8 characters.");
     if (next !== again) refuse("The new passwords do not match.");
     const row = await prisma.user.findUnique({ where: { id: me.id } });
     if (!row || !(await bcrypt.compare(current, row.passwordHash))) refuse("Your current password is not right.");
     await prisma.user.update({ where: { id: me.id }, data: { passwordHash: await bcrypt.hash(next, 12), mustChangePassword: false } });
     return ok("Password changed");
-  });
+  }, { allowTempPassword: true });
 }

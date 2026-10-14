@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { runDailyJob } from "@/lib/generator";
+import { createHash, timingSafeEqual } from "node:crypto";
+
+/** Constant time comparison, so the secret cannot be guessed from response times. */
+const sameSecret = (a: string, b: string) => timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
 
 export const dynamic = "force-dynamic";
 
@@ -8,10 +12,9 @@ export const dynamic = "force-dynamic";
  * and creates renewal reminders. Call it once a day with: Authorization: Bearer CRON_SECRET
  */
 async function handle(req: NextRequest) {
+  // The secret is accepted only in the Authorization header, never in the URL, so it stays out of server logs.
   const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization") || "";
-  const key = req.nextUrl.searchParams.get("key");
-  if (!secret || (auth !== `Bearer ${secret}` && key !== secret)) return NextResponse.json({ error: "Not allowed" }, { status: 401 });
+  if (!secret || !sameSecret(req.headers.get("authorization") || "", `Bearer ${secret}`)) return NextResponse.json({ error: "Not allowed" }, { status: 401 });
   const result = await runDailyJob();
   return NextResponse.json({ ok: true, ...result });
 }

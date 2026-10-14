@@ -17,17 +17,14 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
   const { me, today } = ctx;
   const f = { industry: sp.industry || "", line: LINES.includes(sp.line || "") ? sp.line! : "", status: STATUS_OPTS.some(([k]) => k === sp.status) ? sp.status! : "current" };
 
-  const [all, openRows, ruleRows] = await Promise.all([
+  const [all, openRows, odRows, ruleRows] = await Promise.all([
     loadProjects(),
-    prisma.task.findMany({ where: { projectId: { not: null }, status: { in: OPEN } }, select: { projectId: true, dueDate: true } }),
+    prisma.task.groupBy({ by: ["projectId"], where: { projectId: { not: null }, status: { in: OPEN } }, _count: { _all: true } }),
+    prisma.task.groupBy({ by: ["projectId"], where: { projectId: { not: null }, status: { in: OPEN }, dueDate: { lt: today } }, _count: { _all: true } }),
     prisma.recurringRule.groupBy({ by: ["projectId"], where: { active: true }, _count: { _all: true } }),
   ]);
-  const openBy = new Map<string, { open: number; od: number }>();
-  for (const t of openRows) {
-    const x = openBy.get(t.projectId!) || { open: 0, od: 0 };
-    x.open++; if (t.dueDate && t.dueDate < today) x.od++;
-    openBy.set(t.projectId!, x);
-  }
+  const odBy = new Map(odRows.map((r) => [r.projectId, r._count._all]));
+  const openBy = new Map(openRows.map((r) => [r.projectId!, { open: r._count._all, od: odBy.get(r.projectId) || 0 }]));
   const rulesBy = new Map(ruleRows.map((r) => [r.projectId, r._count._all]));
 
   const list = all

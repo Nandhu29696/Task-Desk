@@ -13,7 +13,7 @@
     "seed": "tsx prisma/seed.ts",
     "daily": "tsx scripts/daily.ts",
     "typecheck": "tsc --noEmit",
-    "seed:demo": "SEED_DEMO=true tsx prisma/seed.ts"
+    "seed:demo": "tsx prisma/seed.ts --demo"
   },
   "dependencies": {
     "@prisma/adapter-libsql": "^6.19.3",

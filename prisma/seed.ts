@@ -13,6 +13,8 @@ import { closeStaleSessions } from "../src/lib/sessions";
 
 type Any = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const demoFile = path.join(__dirname, "demo.json");
+// "npm run seed:demo" passes --demo: works on Windows, macOS and Linux (no inline env variable needed).
+if (process.argv.includes("--demo")) process.env.SEED_DEMO = "true";
 
 async function base(demo: Any) {
   // first admin

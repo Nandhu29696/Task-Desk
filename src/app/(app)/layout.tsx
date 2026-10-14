@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getCtx } from "@/lib/context";
 import { ROLE } from "@/lib/constants";
@@ -19,6 +21,8 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const ctx = await getCtx();
   const { me, today } = ctx;
+  // A temporary password must be changed before anything else can be used.
+  if (me.mustChangePassword && !((await headers()).get("x-pathname") || "").startsWith("/account")) redirect("/account?first=1");
   void maybeRunDailyJob();
 
   const [pendLeave, policies, acks, credCount, unread, latest, ann, sess] = await Promise.all([

@@ -71,6 +71,13 @@ export function EditPersonModal({ x, ctx, label, triggerClass = "btn btn-q btn-s
           </> : null}
         </div>
         {adm ? <label className="check"><input type="checkbox" name="active" defaultChecked={x.active} />Active (can sign in)</label> : <p className="xs muted">Only the admin can change access or deactivate someone.</p>}
+        {adm && x.id !== ctx.me.id ? (
+          <div>
+            <label className="lbl" htmlFor={`eu-h-${x.id}`}>Hand over work to</label>
+            <select className="field" id={`eu-h-${x.id}`} name="handover" defaultValue={bosses.some((b) => b.id === x.reportsTo) ? x.reportsTo! : ctx.me.id}><Options opts={bosses.map((b): [string, string] => [b.id, `${b.name}, ${ROLE[b.role]}`])} /></select>
+            <p className="xs muted" style={{ marginTop: 4 }}>Used only when you deactivate {x.name} or change their access to Member. Their projects to lead and the people who report to them move to this person. On deactivation their open tasks, subtasks, recurring tasks, pending approvals and client accounts move too.</p>
+          </div>
+        ) : null}
         <div className="row"><button className="btn btn-p">Save</button><ModalCancel /></div>
       </ActionForm>
       <ActionForm action={resetPassword} reset className="stack" style={{ gap: 6, borderTop: "1px solid var(--line2)", paddingTop: 14 }}>
