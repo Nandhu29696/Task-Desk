@@ -3,11 +3,12 @@
 import { cookies } from "next/headers";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { LINES, PRIORITIES, PRIORITY, closed } from "@/lib/constants";
+import { FREQ, FREQS, LINES, PRIORITIES, PRIORITY, closed } from "@/lib/constants";
 import { fmtDate, isDayKey, mins, todayKey } from "@/lib/dates";
 import { act, notify } from "@/lib/log";
 import { blockersOf } from "@/lib/taskops";
-import { canDelete, canEdit, canReassign, isAdmin, isLeadOrAdmin } from "@/lib/permissions";
+import { canDelete, canEdit, canManage, canReassign, isAdmin, isLeadOrAdmin } from "@/lib/permissions";
+import { generate } from "@/lib/generator";
 import { mentionedUsers } from "@/lib/logic";
 import { loadUsers } from "@/lib/model";
 import { int, list, ok, opt, refuse, run, str, type Result } from "@/lib/action";
@@ -59,13 +60,45 @@ export async function setTaskView(_p: Result, fd: FormData): Promise<Result> {
 
 // ============ create, edit, delete ============
 
+/** New task with Repeats set: a recurring rule on a project the person manages (preview newtask with frequency). */
+async function createRecurring(me: Me, fd: FormData, project: { id: string; line: string; leadId: string | null; status: string; name: string } | null, freq: string): Promise<Result> {
+  if (!FREQS.includes(freq)) refuse("Pick how often it repeats.");
+  if (!project) refuse("Pick a project for a repeating task");
+  const p = project!;
+  if (!canManage(me, p)) refuse("Only the project lead or an admin can add repeating tasks to " + p.name);
+  if (p.status !== "ACTIVE") refuse("This project is not active. Resume it before adding repeating tasks.");
+  const want = opt(fd, "assigneeId");
+  const assignee = isLeadOrAdmin(me) && want ? await prisma.user.findFirst({ where: { id: want, active: true }, select: { id: true } }) : null;
+  const cat = str(fd, "category"), pr = str(fd, "priority"), due = str(fd, "dueDate"), est = int(fd, "estimate");
+  const wd = int(fd, "weekday"), md = int(fd, "monthDay");
+  const r = await prisma.$transaction(async (tx) => {
+    const r = await tx.recurringRule.create({
+      data: {
+        projectId: p.id, title: str(fd, "title"), description: str(fd, "description"), category: LINES.includes(cat) ? cat : p.line, frequency: freq,
+        weekday: freq === "WEEKLY" ? Math.min(6, Math.max(0, wd ?? 1)) : null,
+        monthDay: freq === "MONTHLY" || freq === "QUARTERLY" ? Math.min(31, Math.max(1, md ?? 1)) : null,
+        skipWeekends: freq === "DAILY" ? fd.get("skipWeekends") === "on" : true, dueOffsetDays: 0,
+        startDate: isDayKey(due) ? due : todayKey(), endDate: null, assigneeId: assignee?.id || me.id,
+        priority: PRIORITIES.includes(pr) ? pr : "MEDIUM", estimate: est !== null && est > 0 ? est : null,
+        checklist: JSON.stringify(fd.getAll("st_title").map((x) => String(x).trim()).filter(Boolean)), active: true,
+      },
+    });
+    await act(tx, me.id, "added recurring task", `${r.title} (${FREQ[freq]})`, null, p.id);
+    return r;
+  });
+  const n = await generate({ ruleId: r.id, byId: me.id });
+  return ok(`Recurring task created. ${n} upcoming ${n === 1 ? "occurrence" : "occurrences"} scheduled`, { href: `/projects/${p.id}` });
+}
+
 export async function createTask(_p: Result, fd: FormData): Promise<Result> {
   return run(async (me) => {
     const title = str(fd, "title");
     if (!title) refuse("Give the task a title.");
     const pid = opt(fd, "projectId");
-    const project = pid ? await prisma.project.findUnique({ where: { id: pid }, select: { id: true, line: true } }) : null;
+    const project = pid ? await prisma.project.findUnique({ where: { id: pid }, select: { id: true, line: true, leadId: true, status: true, name: true } }) : null;
     if (pid && !project) refuse("That project was deleted.");
+    const freq = str(fd, "frequency") || "ONCE";
+    if (freq !== "ONCE") return createRecurring(me, fd, project, freq);
     const users = await prisma.user.findMany({ where: { active: true }, select: { id: true } });
     const activeIds = new Set(users.map((u) => u.id));
     const want = opt(fd, "assigneeId");

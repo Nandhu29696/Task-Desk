@@ -35,6 +35,8 @@ export function NewProjectForm({ admin, clients, presetClient, leads, people, te
 }) {
   const [line, setLine] = useState("SEO");
   const [clientId, setClientId] = useState(presetClient);
+  const [label, setLabel] = useState("");
+  const hasClient = !!clientId || !!label.trim(); // the contact is only needed for client work
   const [rows, setRows] = useState([1]);
   const next = useRef(2);
   const preset = clients.find((c) => c.id === presetClient);
@@ -63,9 +65,9 @@ export function NewProjectForm({ admin, clients, presetClient, leads, people, te
           {admin ? (
             <div><label className="lbl" htmlFor="np-client">Client</label><select className="field" id="np-client" name="clientId" value={clientId} onChange={(e) => pickClient(e.currentTarget)}><Options opts={[["", "Internal (no client)"], ...clients.map((c): [string, string] => [c.id, c.name])]} /></select></div>
           ) : (
-            <div><label className="lbl" htmlFor="np-clientl">Client</label><input className="field" id="np-clientl" name="clientLabel" placeholder="Leave empty for internal work" /></div>
+            <div><label className="lbl" htmlFor="np-clientl">Client</label><input className="field" id="np-clientl" name="clientLabel" placeholder="Leave empty for internal work" value={label} onChange={(e) => setLabel(e.currentTarget.value)} /></div>
           )}
-          {admin && !clientId ? <div><label className="lbl" htmlFor="np-clientl">Client name if not in the list</label><input className="field" id="np-clientl" name="clientLabel" placeholder="Leave empty for internal work" /></div> : null}
+          {admin && !clientId ? <div><label className="lbl" htmlFor="np-clientl">Client name if not in the list</label><input className="field" id="np-clientl" name="clientLabel" placeholder="Leave empty for internal work" value={label} onChange={(e) => setLabel(e.currentTarget.value)} /></div> : null}
           <div><label className="lbl" htmlFor="np-ind">Industry</label><select className="field" id="np-ind" name="industry" defaultValue={preset?.industry || "Real estate"}><Options opts={INDUSTRIES.map((i) => [i, i])} /></select></div>
           <div><label className="lbl" htmlFor="np-web">Website</label><input className="field" id="np-web" name="website" type="url" placeholder="https://example.in" /></div>
           <div><label className="lbl" htmlFor="np-line">Main service line</label><select className="field" id="np-line" name="line" value={line} onChange={(e) => setLine(e.currentTarget.value)}><Options opts={LINES.map((x) => [x, LINE[x]])} /></select></div>
@@ -77,7 +79,7 @@ export function NewProjectForm({ admin, clients, presetClient, leads, people, te
       <section className="panel pad stack">
         <div><h2>Client contact</h2><p className="small soft">Who the team talks to for this project.{admin ? " Filled in from the client when you pick one." : ""}</p></div>
         <div className="grid4">
-          <div><label className="lbl" htmlFor="np-pn">Name</label><input className="field" id="np-pn" name="poc_name" required defaultValue={pc.name} /></div>
+          <div><label className="lbl" htmlFor="np-pn">Name{hasClient ? "" : " (optional for internal work)"}</label><input className="field" id="np-pn" name="poc_name" required={hasClient} defaultValue={pc.name} /></div>
           <div><label className="lbl" htmlFor="np-pr">Position</label><input className="field" id="np-pr" name="poc_role" defaultValue={pc.role} placeholder="Marketing Manager" /></div>
           <div><label className="lbl" htmlFor="np-pp">Phone</label><input className="field" id="np-pp" name="poc_phone" defaultValue={pc.phone} placeholder="+91 98765 43210" /></div>
           <div><label className="lbl" htmlFor="np-pe">Email</label><input className="field" id="np-pe" type="email" name="poc_email" defaultValue={pc.email} /></div>

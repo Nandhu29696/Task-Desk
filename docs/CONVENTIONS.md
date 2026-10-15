@@ -61,3 +61,11 @@ export async function addThing(_p: Result, fd: FormData): Promise<Result> {
 ## Wording
 
 Everything people read is plain English. Never use hyphens, en dashes or em dashes in visible text: write "one time", "sign in", "40 to 60". Keep the preview's labels and messages exactly.
+
+## Decisions
+
+| Date | Decision |
+| --- | --- |
+| 15 Oct 2026 | **What members can see.** Members see every task and project, the Team page, and can comment on any task, as in the approved preview. Write rules stay in `src/lib/permissions.ts`. Revisit only if the team asks for private projects. |
+| 15 Oct 2026 | **Client contact on New project** is required only when the project has a client (picked or typed). Internal projects can leave it empty. The preview always required it. |
+| 15 Oct 2026 | **Tool sign in type.** Tools record how people sign in: Shared login (a saved password, required), Own login, or Free, no login. A password is kept only for a shared login. |

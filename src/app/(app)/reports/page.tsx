@@ -9,6 +9,7 @@ import { fmtDate, fmtTime, mins, pct } from "@/lib/dates";
 import { sortTasks } from "@/lib/logic";
 import { csvFor, loadReport, PERIOD_WORD, PERIODS, rangeFor, reportParams, shiftAnchor, type Row } from "@/lib/report";
 import { AutoSubmit } from "@/components/client/ActionForm";
+import { CopyButton } from "@/components/client/Widgets";
 import { AutoInput } from "@/components/projects/Bits";
 import { Cad, Empty, Options, Stats } from "@/components/ui";
 
@@ -69,7 +70,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     <>
       <header className="between">
         <div><h1>{PERIOD[f.period]} report</h1><p className="soft">{rg.label}. {scope}</p></div>
-        <a className="btn btn-q" href={csvHref} download>Download CSV</a>
+        <div className="row" style={{ gap: 8 }}>
+          <CopyButton text={csv} label="Copy CSV" className="btn btn-q" done="CSV copied. Paste it into Google Sheets or Excel">Copy CSV</CopyButton>
+          <a className="btn btn-q" href={csvHref} download>Download CSV</a>
+        </div>
       </header>
       <div className="panel pad stack">
         <div className="row" style={{ justifyContent: "space-between" }}>

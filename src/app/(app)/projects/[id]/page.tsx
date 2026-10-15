@@ -4,7 +4,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getCtx, userOpts } from "@/lib/context";
 import { FORDER, FREQS, INDUSTRIES, LINE, LINES, PSTATUS, closed } from "@/lib/constants";
-import { addK, addMonths, dayOf, fmtMonth, fmtShort, fmtStamp, mins, monthStart, pct, quarterStart, startOfWeek } from "@/lib/dates";
+import { addK, addMonths, dayOf, fmtMonth, fmtShort, fmtStamp, fromLocal, mins, monthStart, pct, quarterStart, startOfWeek } from "@/lib/dates";
 import { loadActivities, loadProjects, loadRules, loadTasks } from "@/lib/model";
 import { canManage, isAdmin } from "@/lib/permissions";
 import { describeRule, plannedPerMonth } from "@/lib/recurrence";
@@ -36,34 +36,45 @@ export default async function ProjectPage({ params, searchParams }: { params: Pr
   const base = `/projects/${p.id}${period !== "MONTH" ? `?period=${period}` : ""}`;
   const withPanel = (x: string) => `/projects/${p.id}?${period !== "MONTH" ? `period=${period}&` : ""}panel=${x}`;
 
-  const [rulesRaw, pt, logs, cmts, feed, clients] = await Promise.all([
+  const [from, to] = period === "WEEK" ? [startOfWeek(t0), addK(startOfWeek(t0), 6)] : period === "MONTH" ? [monthStart(t0), addK(addMonths(t0, 1), -1)] : period === "QUARTER" ? [quarterStart(t0), addK(addMonths(quarterStart(t0), 3), -1)] : ["", "9999"];
+  const pword = PWORD[period];
+  const inP = (k: string | null | undefined): k is string => !!k && k >= from && k <= to;
+  const inPeriodAt = period === "ALL" ? {} : { createdAt: { gte: fromLocal(from), lt: fromLocal(addK(to, 1)) } };
+
+  // Light rows for every task (stats and charts); full rows only for the open tasks listed on the page.
+  // Time and comments are summed in the database for the selected period.
+  const [rulesRaw, light, openFull, logRows, cmtRows, collabRows, feed, clients] = await Promise.all([
     loadRules({ projectId: p.id }),
-    loadTasks({ projectId: p.id }),
-    prisma.timeLog.findMany({ where: { task: { projectId: p.id } }, select: { taskId: true, userId: true, minutes: true, workDate: true } }),
-    prisma.comment.findMany({ where: { task: { projectId: p.id } }, select: { taskId: true, userId: true, createdAt: true } }),
+    prisma.task.findMany({ where: { projectId: p.id }, select: { id: true, status: true, dueDate: true, completedAt: true, assigneeId: true, frequency: true } }),
+    loadTasks({ projectId: p.id, status: { notIn: ["DONE", "CANCELLED"] } }),
+    prisma.timeLog.groupBy({ by: ["taskId", "userId"], where: { task: { projectId: p.id }, ...(period === "ALL" ? {} : { workDate: { gte: from, lte: to } }) }, _sum: { minutes: true } }),
+    prisma.comment.groupBy({ by: ["userId"], where: { task: { projectId: p.id }, ...inPeriodAt }, _count: { _all: true } }),
+    prisma.taskCollaborator.findMany({ where: { task: { projectId: p.id } }, distinct: ["userId"], select: { userId: true } }),
     loadActivities({ projectId: p.id }, 30),
     manage && isAdmin(me) ? prisma.client.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }) : Promise.resolve([] as { id: string; name: string }[]),
   ]);
   const rules = [...rulesRaw].sort((a, b) => Number(b.active) - Number(a.active) || FORDER[a.frequency] - FORDER[b.frequency] || a.title.localeCompare(b.title));
+  const pt = light.map((t) => ({ ...t, doneOn: t.completedAt ? dayOf(t.completedAt) : null }));
   const ptIds = new Set(pt.map((t) => t.id));
-  const outside = [...new Set(pt.flatMap((t) => t.deps).filter((d) => !ptIds.has(d)))];
-  const depStatus = outside.length ? await prisma.task.findMany({ where: { id: { in: outside } }, select: { id: true, status: true } }) : [];
-  const ccount = new Map<string, number>();
-  for (const c of cmts) ccount.set(c.taskId, (ccount.get(c.taskId) || 0) + 1);
+  const open = sortTasks(openFull);
+  const shownOpen = open.slice(0, 60);
+  const outside = [...new Set(shownOpen.flatMap((t) => t.deps).filter((d) => !ptIds.has(d)))];
+  const [depStatus, ccRows] = await Promise.all([
+    outside.length ? prisma.task.findMany({ where: { id: { in: outside } }, select: { id: true, status: true } }) : Promise.resolve([]),
+    shownOpen.length ? prisma.comment.groupBy({ by: ["taskId"], where: { taskId: { in: shownOpen.map((t) => t.id) } }, _count: { _all: true } }) : Promise.resolve([]),
+  ]);
+  const ccount = new Map(ccRows.map((c) => [c.taskId, c._count._all]));
   const lc = lineCtx(ctx, [p], [...pt, ...depStatus], ccount);
 
-  const open = sortTasks(pt.filter((t) => !closed(t.status)));
   const od = open.filter((t) => t.dueDate && t.dueDate < t0).length;
   const activeRules = rules.filter((r) => r.active);
   const perMonth = plannedPerMonth(rules);
 
-  const [from, to] = period === "WEEK" ? [startOfWeek(t0), addK(startOfWeek(t0), 6)] : period === "MONTH" ? [monthStart(t0), addK(addMonths(t0, 1), -1)] : period === "QUARTER" ? [quarterStart(t0), addK(addMonths(quarterStart(t0), 3), -1)] : ["", "9999"];
-  const pword = PWORD[period];
-  const inP = (k: string | null | undefined): k is string => !!k && k >= from && k <= to;
+  const logsP = logRows.map((l) => ({ taskId: l.taskId, userId: l.userId, minutes: l._sum.minutes || 0 }));
+  const cmBy = new Map(cmtRows.map((c) => [c.userId, c._count._all]));
   const due = pt.filter((t) => inP(t.dueDate) && t.status !== "CANCELLED"), dueSoFar = due.filter((t) => t.dueDate! <= t0);
-  const doneP = pt.filter((t) => t.status === "DONE" && t.completedAt && inP(t.completedAt.slice(0, 10)));
-  const onTime = doneP.filter((t) => !t.dueDate || t.completedAt!.slice(0, 10) <= t.dueDate).length;
-  const logsP = logs.filter((l) => inP(l.workDate));
+  const doneP = pt.filter((t) => t.status === "DONE" && inP(t.doneOn));
+  const onTime = doneP.filter((t) => !t.dueDate || t.doneOn! <= t.dueDate).length;
   const minsP = logsP.reduce((a, l) => a + l.minutes, 0);
   const rate = dueSoFar.length ? dueSoFar.filter((t) => t.status === "DONE").length / dueSoFar.length : null;
   const cadRows = FREQS.map((fq) => {
@@ -72,20 +83,20 @@ export default async function ProjectPage({ params, searchParams }: { params: Pr
     const op = ts.filter((t) => !closed(t.status));
     return { fq, rules: activeRules.filter((r) => r.frequency === fq).length, due: d.length, done: d.filter((t) => t.status === "DONE").length, open: op.length, od: op.filter((t) => t.dueDate && t.dueDate < t0).length, rate: ds.length ? dn / ds.length : null, mins: logsP.filter((l) => tsIds.has(l.taskId)).reduce((a, l) => a + l.minutes, 0) };
   }).filter((x) => x.rules || x.due || x.open);
-  const ppl = [...new Set([p.leadId, ...p.members, ...pt.map((t) => t.assigneeId), ...pt.flatMap((t) => t.collab), ...logsP.map((l) => l.userId)].filter((x): x is string => !!x))].filter((x) => user(x));
+  const ppl = [...new Set([p.leadId, ...p.members, ...pt.map((t) => t.assigneeId), ...collabRows.map((c) => c.userId), ...logsP.map((l) => l.userId)].filter((x): x is string => !!x))].filter((x) => user(x));
   const contrib = ppl.map((uid) => {
     const mine = pt.filter((t) => t.assigneeId === uid), op = mine.filter((t) => !closed(t.status));
     return {
       id: uid, role: uid === p.leadId ? "Lead" : p.members.includes(uid) ? "Member" : "Helper",
       done: doneP.filter((t) => t.assigneeId === uid).length, open: op.length, od: op.filter((t) => t.dueDate && t.dueDate < t0).length,
       mins: logsP.filter((l) => l.userId === uid).reduce((a, l) => a + l.minutes, 0),
-      cm: cmts.filter((c) => c.userId === uid && inP(dayOf(c.createdAt))).length,
+      cm: cmBy.get(uid) || 0,
     };
   }).sort((a, b) => b.done - a.done || b.mins - a.mins);
   const maxDone = Math.max(1, ...contrib.map((c) => c.done)), totDone = contrib.reduce((a, c) => a + c.done, 0);
   const months = [5, 4, 3, 2, 1, 0].map((i) => {
     const mk = addMonths(t0, -i).slice(0, 7);
-    return { mk, done: pt.filter((t) => t.status === "DONE" && t.completedAt?.slice(0, 7) === mk).length, due: pt.filter((t) => t.dueDate?.slice(0, 7) === mk && t.status !== "CANCELLED").length };
+    return { mk, done: pt.filter((t) => t.status === "DONE" && t.doneOn?.slice(0, 7) === mk).length, due: pt.filter((t) => t.dueDate?.slice(0, 7) === mk && t.status !== "CANCELLED").length };
   });
   const maxM = Math.max(1, ...months.map((m) => Math.max(m.done, m.due)));
   const lead = user(p.leadId);
@@ -238,7 +249,7 @@ export default async function ProjectPage({ params, searchParams }: { params: Pr
 
       <section className="stack">
         <h2>Open tasks <span className="xs muted" style={{ fontWeight: 400 }}>{open.length}</span></h2>
-        {open.length ? <TaskLines tasks={open.slice(0, 60)} lc={lc} clamp project={false} assignee /> : <Empty>All clear. Nothing open on this project.</Empty>}
+        {open.length ? <TaskLines tasks={shownOpen} lc={lc} clamp project={false} assignee /> : <Empty>All clear. Nothing open on this project.</Empty>}
         {open.length > 60 ? <p className="small"><Link className="link" href={`/tasks?project=${p.id}&status=open`}>See all {open.length} open tasks</Link></p> : null}
       </section>
 

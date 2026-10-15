@@ -12,7 +12,9 @@ import { Empty, Options } from "@/components/ui";
 import { PWVIS } from "@/components/office/shared";
 import { GenPasswordField, ModalCancel } from "@/components/people/client";
 
-type ToolRow = { id: string; name: string; category: string; url: string; username: string; twofa: string; plan: string; visibility: string; notes: string; hasPw: boolean };
+type ToolRow = { id: string; name: string; category: string; url: string; username: string; twofa: string; plan: string; access: string; visibility: string; notes: string; hasPw: boolean };
+
+const SIGNIN: [string, string][] = [["SHARED", "Shared login (saved password)"], ["OWN", "Own login (each person signs in)"], ["FREE", "Free, no login"]];
 
 function ToolFields({ t }: { t?: ToolRow }) {
   return (
@@ -22,7 +24,8 @@ function ToolFields({ t }: { t?: ToolRow }) {
         <div><label className="lbl">Category</label><select className="field" name="category" defaultValue={t?.category || "SEO"}><Options opts={TOOLCATS.map((c): [string, string] => [c, c])} /></select></div>
         <div><label className="lbl">Login link</label><input className="field" name="url" type="url" defaultValue={t?.url || ""} placeholder="https://" /></div>
         <div><label className="lbl">Login (username, email or mobile number)</label><input className="field" name="login" defaultValue={t?.username || ""} autoComplete="off" /></div>
-        <div><label className="lbl">Password</label><GenPasswordField placeholder={t?.hasPw ? "Leave empty to keep the saved password" : "Leave empty if everyone uses their own login"} />
+        <div><label className="lbl">How people sign in</label><select className="field" name="access" defaultValue={!t ? "SHARED" : t.access === "SHARED" && !t.hasPw ? "OWN" : t.access}><Options opts={SIGNIN} /></select></div>
+        <div><label className="lbl">Password (shared login only)</label><GenPasswordField placeholder={t?.hasPw ? "Leave empty to keep the saved password" : "The password everyone uses"} />
           {t?.hasPw ? <label className="check xs" style={{ marginTop: 4 }}><input type="checkbox" name="clearpw" />Remove the saved password</label> : null}</div>
         <div><label className="lbl">Two factor details (if enabled)</label><input className="field" name="twofa" defaultValue={t?.twofa || ""} placeholder="Code goes to the office phone" /></div>
         <div><label className="lbl">Free or paid</label><select className="field" name="plan" defaultValue={t?.plan || "FREE"}><Options opts={[["FREE", "Free"], ["PAID", "Paid"]]} /></select></div>
@@ -39,7 +42,7 @@ export default async function ToolsPage({ searchParams }: { searchParams: Promis
   const u = ctx.me, adm = isAdmin(u);
   const f = { q: (sp.q || "").trim(), cat: TOOLCATS.includes(sp.cat || "") ? sp.cat! : "" };
   const adding = adm && sp.add === "1";
-  const rows = await prisma.tool.findMany({ select: { id: true, name: true, category: true, url: true, username: true, twofa: true, plan: true, visibility: true, notes: true, passwordEnc: true } });
+  const rows = await prisma.tool.findMany({ select: { id: true, name: true, category: true, url: true, username: true, twofa: true, plan: true, access: true, visibility: true, notes: true, passwordEnc: true } });
   const tools: ToolRow[] = rows.map(({ passwordEnc, ...t }) => ({ ...t, hasPw: !!passwordEnc }));
   const list = tools
     .filter((t) => (!f.cat || t.category === f.cat) && (!f.q || (t.name + " " + t.username + " " + t.notes).toLowerCase().includes(f.q.toLowerCase())))
@@ -48,7 +51,8 @@ export default async function ToolsPage({ searchParams }: { searchParams: Promis
   const keep = (extra: Record<string, string>) => { const p = new URLSearchParams(); for (const [k, v] of Object.entries({ q: f.q, cat: f.cat, ...extra })) if (v) p.set(k, v); const s = p.toString(); return "/tools" + (s ? "?" + s : ""); };
 
   const pwCell = (t: ToolRow) => {
-    if (!t.hasPw) return <span className="xs muted">Own login</span>;
+    if (t.access === "FREE") return <span className="xs muted">Free, no login</span>;
+    if (t.access === "OWN" || !t.hasPw) return <span className="xs muted">Own login</span>;
     if (!canSeeToolPassword(u, t)) return <span className="xs muted">Ask the admin</span>;
     return <SecretBox reveal={revealToolPassword.bind(null, t.id)} />;
   };

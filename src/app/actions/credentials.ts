@@ -88,8 +88,8 @@ export async function setAccess(_p: Result, fd: FormData): Promise<Result> {
   });
 }
 
-/** Bound to one credential id by the page. Needs full access; every reveal is logged. */
-export async function revealCredential(id: string): Promise<{ value?: string; error?: string }> {
+/** Bound to one credential id by the page. Needs full access; every view and every copy is logged. */
+export async function revealCredential(id: string, purpose: "view" | "copy" = "view"): Promise<{ value?: string; error?: string }> {
   const me = await getCurrentUser();
   if (!me) return { error: "Please sign in again." };
   const c = await prisma.credential.findUnique({ where: { id }, select: { id: true, name: true, passwordEnc: true, leadAccess: true, memberAccess: true } });
@@ -97,6 +97,6 @@ export async function revealCredential(id: string): Promise<{ value?: string; er
   if (credLevel(me, c) !== "FULL") return { error: "This password is not shared with you." };
   let value = "";
   try { value = decrypt(c.passwordEnc); } catch { return { error: "This password could not be read. Check the encryption key." }; }
-  await prisma.credentialView.create({ data: { credentialId: c.id, userId: me.id, name: c.name, action: "viewed" } });
+  await prisma.credentialView.create({ data: { credentialId: c.id, userId: me.id, name: c.name, action: purpose === "copy" ? "copied password for" : "viewed" } });
   return { value };
 }

@@ -45,26 +45,26 @@ export function ConfirmButton({ label, className = "btn btn-d btn-sm", name, val
   return <button type="submit" className="btn btn-arm btn-sm" name={name} value={value}>Click again to confirm</button>;
 }
 
-export function CopyButton({ text, label = "Copy", className = "iconbtn sm" }: { text: string; label?: string; className?: string }) {
+export function CopyButton({ text, label = "Copy", className = "iconbtn sm", done = "Copied", children }: { text: string; label?: string; className?: string; done?: string; children?: ReactNode }) {
   return (
     <button type="button" className={className} title={label} aria-label={label} onClick={async () => {
-      try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Could not copy. Select and copy it by hand."); }
-    }}><Icon name="copy" /></button>
+      try { await navigator.clipboard.writeText(text); toast(done); } catch { toast("Could not copy. Select and copy it by hand."); }
+    }}>{children ?? <Icon name="copy" />}</button>
   );
 }
 
 /**
  * Password cell: the password is never sent with the page. The eye and copy icons call
- * a server action that checks access, logs the view and returns the password.
+ * a server action that checks access, logs the view or the copy and returns the password.
  */
-export function SecretBox({ reveal }: { reveal: () => Promise<{ value?: string; error?: string }> }) {
+export function SecretBox({ reveal }: { reveal: (purpose: "view" | "copy") => Promise<{ value?: string; error?: string }> }) {
   const [value, setValue] = useState<string | null>(null);
-  const get = async () => { const r = await reveal(); if (r.error) { toast(r.error); return null; } return r.value ?? ""; };
+  const get = async (purpose: "view" | "copy") => { const r = await reveal(purpose); if (r.error) { toast(r.error); return null; } return r.value ?? ""; };
   return (
     <div className="pwbox">
       <code className="pw">{value ?? "•".repeat(10)}</code>
-      <button type="button" className="iconbtn sm" title={value ? "Hide password" : "Show password"} aria-label={value ? "Hide password" : "Show password"} onClick={async () => { if (value !== null) { setValue(null); return; } const v = await get(); if (v !== null) setValue(v); }}><Icon name={value ? "eyeoff" : "eye"} /></button>
-      <button type="button" className="iconbtn sm" title="Copy password" aria-label="Copy password" onClick={async () => { const v = value ?? (await get()); if (v === null) return; try { await navigator.clipboard.writeText(v); toast("Password copied"); } catch { setValue(v); toast("Shown instead. Copy it by hand."); } }}><Icon name="copy" /></button>
+      <button type="button" className="iconbtn sm" title={value ? "Hide password" : "Show password"} aria-label={value ? "Hide password" : "Show password"} onClick={async () => { if (value !== null) { setValue(null); return; } const v = await get("view"); if (v !== null) setValue(v); }}><Icon name={value ? "eyeoff" : "eye"} /></button>
+      <button type="button" className="iconbtn sm" title="Copy password" aria-label="Copy password" onClick={async () => { const v = await get("copy"); if (v === null) return; try { await navigator.clipboard.writeText(v); toast("Password copied"); } catch { setValue(v); toast("Shown instead. Copy it by hand."); } }}><Icon name="copy" /></button>
     </div>
   );
 }

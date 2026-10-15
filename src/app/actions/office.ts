@@ -246,6 +246,7 @@ function toolFrom(fd: FormData) {
   return {
     name, category, url, username: str(fd, "login"), twofa: str(fd, "twofa"),
     plan: str(fd, "plan") === "PAID" ? "PAID" : "FREE",
+    access: ["SHARED", "OWN", "FREE"].includes(str(fd, "access")) ? str(fd, "access") : "SHARED",
     visibility: PWVIS[str(fd, "vis")] ? str(fd, "vis") : "ALL",
     notes: str(fd, "notes"),
   };
@@ -255,8 +256,10 @@ export async function addTool(_p: Result, fd: FormData): Promise<Result> {
   return run(async (me) => {
     adminOnly(me);
     const t = toolFrom(fd), password = String(fd.get("password") ?? "");
+    if (t.access === "SHARED" && !password) refuse("Add the shared password, or pick Own login or Free, no login");
     await prisma.$transaction(async (tx) => {
-      await tx.tool.create({ data: { ...t, passwordEnc: encrypt(password), access: password ? "SHARED" : "OWN" } });
+      // A password is kept only for a shared login.
+      await tx.tool.create({ data: { ...t, passwordEnc: t.access === "SHARED" ? encrypt(password) : "" } });
       await act(tx, me.id, "added tool", t.name);
     });
     return ok("Tool added", { href: "/tools" });
@@ -269,7 +272,8 @@ export async function editTool(_p: Result, fd: FormData): Promise<Result> {
     const ex = await prisma.tool.findUnique({ where: { id: str(fd, "id") } });
     if (!ex) refuse("That tool was not found");
     const t = toolFrom(fd), password = String(fd.get("password") ?? ""), clear = bool(fd, "clearpw");
-    const pw = clear ? { passwordEnc: "", access: "OWN" } : password ? { passwordEnc: encrypt(password), access: "SHARED" } : {};
+    if (t.access === "SHARED" && !password && (clear || !ex!.passwordEnc)) refuse("Add the shared password, or pick Own login or Free, no login");
+    const pw = t.access !== "SHARED" ? { passwordEnc: "" } : password ? { passwordEnc: encrypt(password) } : {};
     await prisma.$transaction(async (tx) => {
       await tx.tool.update({ where: { id: ex!.id }, data: { ...t, ...pw } });
       await act(tx, me.id, "updated tool", t.name);
@@ -291,8 +295,8 @@ export async function removeTool(_p: Result, fd: FormData): Promise<Result> {
   });
 }
 
-/** Returns a tool password after checking access, and logs the view. Bind the tool id on the page. */
-export async function revealToolPassword(id: string): Promise<{ value?: string; error?: string }> {
+/** Returns a tool password after checking access, and logs the view or the copy. Bind the tool id on the page. */
+export async function revealToolPassword(id: string, purpose: "view" | "copy" = "view"): Promise<{ value?: string; error?: string }> {
   const me = await getCurrentUser();
   if (!me) return { error: "Please sign in again." };
   const t = await prisma.tool.findUnique({ where: { id } });
@@ -300,7 +304,7 @@ export async function revealToolPassword(id: string): Promise<{ value?: string; 
   if (!canSeeToolPassword(me, t)) return { error: "Ask the admin for this password" };
   try {
     const value = decrypt(t.passwordEnc);
-    await prisma.credentialView.create({ data: { toolId: t.id, userId: me.id, name: t.name, action: "viewed" } });
+    await prisma.credentialView.create({ data: { toolId: t.id, userId: me.id, name: t.name, action: purpose === "copy" ? "copied password for" : "viewed" } });
     return { value };
   } catch (e) {
     console.error(e);
