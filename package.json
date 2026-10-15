@@ -12,7 +12,9 @@
     "db:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "daily": "tsx scripts/daily.ts",
+    "backup": "tsx scripts/backup.ts",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
     "seed:demo": "tsx prisma/seed.ts --demo"
   },
   "dependencies": {

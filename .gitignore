@@ -156,3 +156,6 @@ next-env.d.ts
 # Local working files (design preview download, status tracker)
 TaskDesk (Copy).html
 TaskDesk_Completion_Tracker.xlsx
+
+# Database backups (npm run backup)
+backups/
