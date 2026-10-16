@@ -108,7 +108,7 @@ async function demoData(demo: Any) {
   await prisma.timeLog.createMany({ data: (demo.timelogs as Any[]).map((l) => ({ taskId: l.taskId, userId: l.userId, minutes: l.minutes, workDate: KS(l.on), note: l.note || "" })) });
   await prisma.activity.createMany({ data: (demo.activities as Any[]).filter((a) => !a.taskId || tasks.some((t) => t.id === a.taskId)).map((a) => ({ userId: a.userId, action: a.action, detail: a.detail || "", taskId: a.taskId, projectId: a.projectId, createdAt: D(a.at)! })) });
   await prisma.leave.createMany({ data: (demo.leaves as Any[]).map((l) => ({ userId: l.userId, type: l.type, fromDate: l.type === "RH" ? l.from : KS(l.from), toDate: l.type === "RH" ? l.to : KS(l.to), half: !!l.half, reason: l.reason || "", status: l.status, decidedById: l.decidedBy, decidedAt: l.decidedBy ? D(l.at) : null, createdAt: D(l.at)! })) });
-  await prisma.session.createMany({ data: (demo.sessions as Any[]).filter((s) => KS(s.in.slice(0, 10)) < today).map((s) => ({ userId: s.userId, day: KS(s.in.slice(0, 10)), signedInAt: D(s.in)!, signedOutAt: D(s.out) })) });
+  await prisma.session.createMany({ data: (demo.sessions as Any[]).map((s) => ({ userId: s.userId, day: KS(s.in.slice(0, 10)), signedInAt: D(s.in)!, signedOutAt: D(s.out) })) });
   for (const v of demo.vault as Any[]) {
     await prisma.credential.create({ data: { scope: v.scope, clientId: v.clientId, name: v.name, url: v.url || "", username: v.username || "", passwordEnc: encrypt(v.password || ""), notes: v.notes || "", leadAccess: v.access?.LEAD || "NONE", memberAccess: v.access?.MEMBER || "NONE", changedOn: KS(v.changedOn) } });
   }
@@ -121,7 +121,7 @@ async function demoData(demo: Any) {
     await prisma.announcementRead.create({ data: { announcementId: a.id, userId: a.by } });
   }
   const link = (n: Any) => (n.kind === "ANNOUNCE" && demo.announcements[0] ? "ann:" + demo.announcements[0].id : n.link?.name === "task" ? `/tasks/${n.link.id}` : n.link?.name === "leave" ? "/leave" : n.link?.name === "notifications" ? "/notifications" : "");
-  await prisma.notification.createMany({ data: (demo.notifs as Any[]).filter((n) => n.kind !== "RENEWAL").map((n) => ({ userId: n.userId, kind: n.kind, title: n.title, body: n.body || "", link: link(n), fromId: n.from, readAt: n.read ? D(n.at) : null, createdAt: D(n.at)! })) });
+  await prisma.notification.createMany({ data: (demo.notifs as Any[]).map((n) => ({ userId: n.userId, kind: n.kind, title: n.title, body: n.body || "", link: link(n), fromId: n.from, readAt: n.read ? D(n.at) : null, createdAt: D(n.at)! })) });
 
   await closeStaleSessions();
   const made = await generate();
