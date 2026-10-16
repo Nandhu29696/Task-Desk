@@ -52,6 +52,11 @@ async function demoData(demo: Any) {
   const KS = (k: string | null | undefined) => (k ? addK(k, shift) : "");
   const D = (s: string | null | undefined) => (s ? fromLocal(addK(s.slice(0, 10), shift), s.slice(11, 16) || "00:00") : null);
   const hash = await bcrypt.hash("Demo@1234", 12);
+  // A demo person whose email already has an account (such as the first admin) keeps that account's id.
+  for (const u of demo.users as Any[]) {
+    const ex = await prisma.user.findUnique({ where: { email: u.email } });
+    if (ex && ex.id !== u.id) demo = JSON.parse(JSON.stringify(demo).replaceAll(`"${u.id}"`, `"${ex.id}"`));
+  }
 
   for (const u of demo.users as Any[]) {
     const exists = await prisma.user.findFirst({ where: { OR: [{ id: u.id }, { email: u.email }] } });
