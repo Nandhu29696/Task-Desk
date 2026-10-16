@@ -37,9 +37,9 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
   const row = (h: Hol) => (
     <tr key={h.id}>
-      <td className="num small" style={{ whiteSpace: "nowrap" }}>{fmtShort(h.date)}</td><td>{h.name}</td>
-      <td className="small"><span className={`chip ${h.type === "RESTRICTED" ? "chip-rh" : "chip-hol"}`}>{HTYPE[h.type]}</span></td>
-      {adm ? <td className="r"><ActionForm action={removeHoliday} style={{ display: "inline" }}><input type="hidden" name="id" value={h.id} /><ConfirmButton label="Remove" className="btn btn-q btn-sm" /></ActionForm></td> : null}
+      <td className="num small holiday-date">{fmtShort(h.date)}</td><td className="holiday-name">{h.name}</td>
+      <td className="small holiday-type"><span className={`chip ${h.type === "RESTRICTED" ? "chip-rh" : "chip-hol"}`}>{HTYPE[h.type]}</span></td>
+      {adm ? <td className="r holiday-action"><ActionForm action={removeHoliday} style={{ display: "inline" }}><input type="hidden" name="id" value={h.id} /><ConfirmButton label="Remove" className="btn btn-q btn-sm" /></ActionForm></td> : null}
     </tr>
   );
   const up = yearHol.filter((h) => h.date >= t0), past = yearHol.filter((h) => h.date < t0);
@@ -75,8 +75,8 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
           ))}</ul> : <p className="small muted">No leave this month.</p>}
         </section>
         <section className="panel pad stack"><h2>Holidays in {yr}</h2><p className="xs muted" style={{ marginTop: -6 }}>Upcoming first</p>
-          {up.length ? <div className="tablebox"><table className="t"><tbody>{up.map(row)}</tbody></table></div> : <p className="small muted">No more holidays this year.</p>}
-          {past.length ? <details><summary className="sumlink">Earlier in {yr} ({past.length})</summary><div className="tablebox"><table className="t"><tbody>{past.map(row)}</tbody></table></div></details> : null}
+          {up.length ? <div className="tablebox holiday-tablebox"><table className="t holiday-table"><tbody>{up.map(row)}</tbody></table></div> : <p className="small muted">No more holidays this year.</p>}
+          {past.length ? <details><summary className="sumlink">Earlier in {yr} ({past.length})</summary><div className="tablebox holiday-tablebox"><table className="t holiday-table"><tbody>{past.map(row)}</tbody></table></div></details> : null}
           {adm ? (
             <>
               <ActionForm action={addHoliday} reset className="stack" style={{ borderTop: "1px solid var(--line2)", paddingTop: 12 }}>

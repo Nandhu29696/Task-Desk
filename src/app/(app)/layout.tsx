@@ -2,9 +2,9 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { getCtx } from "@/lib/context";
+import { requireUser } from "@/lib/auth";
 import { ROLE } from "@/lib/constants";
-import { fmtShort, fmtTime, stampOf } from "@/lib/dates";
+import { fmtShort, fmtTime, stampOf, todayKey } from "@/lib/dates";
 import { isAdmin } from "@/lib/permissions";
 import { maybeRunDailyJob } from "@/lib/generator";
 import { logout } from "../actions/auth";
@@ -19,8 +19,8 @@ import { Av } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await getCtx();
-  const { me, today } = ctx;
+  const me = await requireUser();
+  const today = todayKey();
   // A temporary password must be changed before anything else can be used.
   if (me.mustChangePassword && !((await headers()).get("x-pathname") || "").startsWith("/account")) redirect("/account?first=1");
   void maybeRunDailyJob();

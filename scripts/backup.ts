@@ -1,5 +1,5 @@
 // Daily database backup: npm run backup
-// Writes backups/taskdesk_<date>_<time>.dump (pg_dump custom format) and removes dumps older than 14 days.
+// Writes backups/taskdesk_<date>_<time>.dump (or .sql with BACKUP_FORMAT=sql) and removes old backups.
 // Restore with: pg_restore --clean --if-exists --no-owner -d <database url> <file>
 // Optional settings: BACKUP_DIR (folder), BACKUP_KEEP_DAYS (default 14), PG_BIN (folder that holds pg_dump).
 import { spawnSync } from "node:child_process";
@@ -33,17 +33,21 @@ const url = databaseUrl().split("?")[0];
 if (!url.startsWith("postgres")) throw new Error("Backups need a PostgreSQL DATABASE_URL.");
 const dir = process.env.BACKUP_DIR || path.join(process.cwd(), "backups");
 const keepDays = Number(process.env.BACKUP_KEEP_DAYS || 14);
+const sql = (process.env.BACKUP_FORMAT || "custom").toLowerCase() === "sql";
 mkdirSync(dir, { recursive: true });
 
 const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "");
-const file = path.join(dir, `taskdesk_${stamp}.dump`);
-const r = spawnSync(pgDump(), ["--format=custom", "--no-owner", "--file", file, url], { stdio: ["ignore", "inherit", "inherit"] });
+const extension = sql ? "sql" : "dump";
+const file = path.join(dir, `taskdesk_${stamp}.${extension}`);
+const args = ["--no-owner", "--file", file, url];
+if (sql) args.unshift("--format=plain"); else args.unshift("--format=custom");
+const r = spawnSync(pgDump(), args, { stdio: ["ignore", "inherit", "inherit"] });
 if (r.status !== 0) { console.error("Backup failed"); process.exit(1); }
 console.log(new Date().toISOString(), "backup written", file, Math.round(statSync(file).size / 1024) + " KB");
 
 const cutoff = Date.now() - keepDays * 864e5;
 for (const f of readdirSync(dir)) {
-  if (!/^taskdesk_.*\.dump$/.test(f)) continue;
+  if (!/^taskdesk_.*\.(dump|sql)$/.test(f)) continue;
   const full = path.join(dir, f);
   if (statSync(full).mtimeMs < cutoff) { unlinkSync(full); console.log("removed old backup", f); }
 }
