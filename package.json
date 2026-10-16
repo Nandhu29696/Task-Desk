@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@prisma/adapter-libsql": "^6.19.3",
-    "@prisma/adapter-mariadb": "^6.19.3",
+    "@prisma/adapter-mariadb": "^7.10.1",
     "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "6.19.3",
     "bcryptjs": "3.0.3",
